@@ -18,11 +18,13 @@ export default async function handler(req, res) {
   // 2. Incoming Messages Handler (POST)
   if (req.method === 'POST') {
     const body = req.body;
+    console.log('Incoming Payload:', JSON.stringify(body));
 
     if (body?.object && body?.entry) {
       const entry = body.entry[0]?.changes?.[0]?.value;
       const messages = entry?.messages;
 
+      // Check if this webhook event is an incoming user message (and not a status update)
       if (messages && messages[0]) {
         const message = messages[0];
         const from = message.from;
@@ -30,9 +32,10 @@ export default async function handler(req, res) {
         if (message.type === 'text') {
           const userName = message.text.body.trim();
           const replyText = `Hi ${userName}!`;
+          console.log(`Replying to ${from} with text: "${replyText}"`);
 
           try {
-            await fetch(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
+            const response = await fetch(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
               method: 'POST',
               headers: {
                 Authorization: `Bearer ${ACCESS_TOKEN}`,
@@ -46,6 +49,9 @@ export default async function handler(req, res) {
                 text: { body: replyText },
               }),
             });
+
+            const result = await response.json();
+            console.log('Meta Send Response:', JSON.stringify(result));
           } catch (err) {
             console.error('Fetch error:', err);
           }
