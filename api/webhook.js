@@ -111,4 +111,102 @@ export default async function handler(req, res) {
                 await redisCommand(['DEL', ...userKeys], REDIS_URL, REDIS_TOKEN);
               }
 
-              await sendWhatsAppMessage(ADMIN_PHONE, '🔄 *Queue has been completely reset
+              await sendWhatsAppMessage(ADMIN_PHONE, '🔄 *Queue has been completely reset to 0.*', ACCESS_TOKEN, PHONE_NUMBER_ID);
+
+            } else {
+              const helpMsg = `❓ *Unknown Admin Command*\n\nAvailable commands:\n• */next* - Call next token & notify user\n• */status* - Overview of queue counts\n• */queue* - Full roster of people in line\n• */reset* - Clear today's queue to 0`;
+              await sendWhatsAppMessage(ADMIN_PHONE, helpMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
+            }
+
+            return res.status(200).json({ status: 'admin_command_processed' });
+          }
+
+          // ----------------------------------------------------
+          // BRANCH B: REGULAR USER (Registering for a token)
+          // ----------------------------------------------------
+          const existingToken = await redisCommand(['GET', `user:${from}`], REDIS_URL, REDIS_TOKEN);
+
+          if (existingToken) {
+            const currentServing = Number(await redisCommand(['GET', 'queue:currently_serving'], REDIS_URL, REDIS_TOKEN)) || 0;
+            const ahead = Math.max(0, Number(existingToken) - currentServing);
+            const reminderMsg = `Hi! You already hold Token *#${existingToken}*.\nCurrently serving: *#${currentServing}*.\nPeople ahead: *${ahead}*.`;
+            await sendWhatsAppMessage(from, reminderMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
+          } else {
+            // 1. Issue next token
+            const newToken = await redisCommand(['INCR', 'queue:token_counter'], REDIS_URL, REDIS_TOKEN);
+
+            // 2. Map phone to token (expires in 24 hrs)
+            await redisCommand(['SET', `user:${from}`, newToken, 'EX', '86400'], REDIS_URL, REDIS_TOKEN);
+
+            // 3. Store record in waiting list
+            const userRecord = JSON.stringify({
+              token: newToken,
+              name: rawText,
+              phone: from,
+              timestamp: Date.now(),
+            });
+            await redisCommand(['RPUSH', 'queue:waiting_list', userRecord], REDIS_URL, REDIS_TOKEN);
+
+            // 4. Calculate position
+            const currentServing = Number(await redisCommand(['GET', 'queue:currently_serving'], REDIS_URL, REDIS_TOKEN)) || 0;
+            const peopleAhead = Math.max(0, Number(newToken) - currentServing - 1);
+
+            const userMsg = `Hi *${rawText}*!\n\nYour Token Number is: *#${newToken}*\nCurrently Serving: *#${currentServing || 1}*\nPeople ahead of you: *${peopleAhead}*`;
+            await sendWhatsAppMessage(from, userMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
+
+            // 5. Notify admin of new registrant
+            if (ADMIN_PHONE) {
+              const adminAlert = `🔔 *New Queue Entry*\n• Name: *${rawText}*\n• Phone: +${from}\n• Assigned Token: *#${newToken}*`;
+              await sendWhatsAppMessage(ADMIN_PHONE, adminAlert, ACCESS_TOKEN, PHONE_NUMBER_ID);
+            }
+          }
+        }
+      }
+    }
+    return res.status(200).json({ status: 'ok' });
+  }
+
+  return res.status(405).send('Method Not Allowed');
+}
+
+// Lightweight HTTP wrapper for Upstash Redis REST API
+async function redisCommand(commandArray, url, token) {
+  try {
+    const res = await fetch(`${url}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(commandArray),
+    });
+    const data = await res.json();
+    return data.result;
+  } catch (err) {
+    console.error('Redis error:', err);
+    return null;
+  }
+}
+
+// Function to send message via Meta Graph API
+async function sendWhatsAppMessage(to, text, accessToken, phoneId) {
+  const url = `https://graph.facebook.com/v21.0/${phoneId}/messages`;
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'text',
+        text: { body: text },
+      }),
+    });
+  } catch (err) {
+    console.error('WhatsApp send error:', err);
+  }
+}
