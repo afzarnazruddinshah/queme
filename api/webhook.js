@@ -28,7 +28,7 @@ export default async function handler(req, res) {
 
       if (messages && messages[0]) {
         const message = messages[0];
-        const from = message.from; // Sender phone digits
+        const from = message.from; // Sender phone number
 
         if (message.type === 'text') {
           const rawText = message.text.body.trim();
@@ -42,12 +42,12 @@ export default async function handler(req, res) {
               const currentServing = Number(await redisCommand(['GET', 'queue:currently_serving'], REDIS_URL, REDIS_TOKEN)) || 0;
               const totalIssued = Number(await redisCommand(['GET', 'queue:token_counter'], REDIS_URL, REDIS_TOKEN)) || 0;
               const waitingCount = Math.max(0, totalIssued - currentServing);
+              const servingTime = currentServing > 0 ? getTokenTime(currentServing) : 'Not started';
 
-              const statusMsg = `📊 *Queue Status Report*\n\n• Currently Serving: *#${currentServing}*\n• Total Tokens Issued: *#${totalIssued}*\n• People Waiting in Line: *${waitingCount}*`;
+              const statusMsg = `📊 *Queue Status Report*\n\n• Currently Serving: *#${currentServing}* (${servingTime})\n• Total Tokens Issued: *#${totalIssued}*\n• People Waiting in Line: *${waitingCount}*`;
               await sendWhatsAppMessage(ADMIN_PHONE, statusMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
 
             } else if (lowerText === '/queue') {
-              // Retrieve all waiting list entries
               const list = await redisCommand(['LRANGE', 'queue:waiting_list', '0', '-1'], REDIS_URL, REDIS_TOKEN) || [];
               const currentServing = Number(await redisCommand(['GET', 'queue:currently_serving'], REDIS_URL, REDIS_TOKEN)) || 0;
 
@@ -59,7 +59,7 @@ export default async function handler(req, res) {
                   try {
                     const record = JSON.parse(item);
                     const marker = record.token === currentServing ? '👉 ' : '• ';
-                    queueRoster += `${marker}*#${record.token}* - ${record.name} (+${record.phone})\n`;
+                    queueRoster += `${marker}*#${record.token}* [${record.timeSlot || getTokenTime(record.token)}] - ${record.name} (+${record.phone})\n`;
                   } catch (_) {}
                 });
                 await sendWhatsAppMessage(ADMIN_PHONE, queueRoster, ACCESS_TOKEN, PHONE_NUMBER_ID);
@@ -89,12 +89,10 @@ export default async function handler(req, res) {
                 }
 
                 if (nextUser) {
-                  // Notify the user it is their turn
-                  const userTurnMsg = `🎉 *Hi ${nextUser.name}!*\n\nIt is now *YOUR TURN* (Token *#${nextUser.token}*).\nPlease proceed to the counter immediately.`;
+                  const userTurnMsg = `🎉 *Hi ${nextUser.name}!*\n\nIt is now *YOUR TURN* (Token *#${nextUser.token}* - Scheduled: *${nextUser.timeSlot || getTokenTime(nextUser.token)}*).\nPlease proceed to the counter immediately.`;
                   await sendWhatsAppMessage(nextUser.phone, userTurnMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
 
-                  // Confirm back to admin
-                  const adminConfirmMsg = `✅ Advanced queue to *#${currentServing}*.\nNotified: *${nextUser.name}* (+${nextUser.phone}).`;
+                  const adminConfirmMsg = `✅ Advanced queue to *#${currentServing}* (${nextUser.timeSlot || getTokenTime(nextUser.token)}).\nNotified: *${nextUser.name}* (+${nextUser.phone}).`;
                   await sendWhatsAppMessage(ADMIN_PHONE, adminConfirmMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
                 } else {
                   await sendWhatsAppMessage(ADMIN_PHONE, `✅ Advanced queue to *#${currentServing}* (User record not found).`, ACCESS_TOKEN, PHONE_NUMBER_ID);
@@ -102,10 +100,8 @@ export default async function handler(req, res) {
               }
 
             } else if (lowerText === '/reset') {
-              // Delete all queue-related keys
               await redisCommand(['DEL', 'queue:token_counter', 'queue:currently_serving', 'queue:waiting_list'], REDIS_URL, REDIS_TOKEN);
 
-              // Clear user lookup keys
               const userKeys = await redisCommand(['KEYS', 'user:*'], REDIS_URL, REDIS_TOKEN) || [];
               if (userKeys.length > 0) {
                 await redisCommand(['DEL', ...userKeys], REDIS_URL, REDIS_TOKEN);
@@ -114,7 +110,7 @@ export default async function handler(req, res) {
               await sendWhatsAppMessage(ADMIN_PHONE, '🔄 *Queue has been completely reset to 0.*', ACCESS_TOKEN, PHONE_NUMBER_ID);
 
             } else {
-              const helpMsg = `❓ *Unknown Admin Command*\n\nAvailable commands:\n• */next* - Call next token & notify user\n• */status* - Overview of queue counts\n• */queue* - Full roster of people in line\n• */reset* - Clear today's queue to 0`;
+              const helpMsg = `❓ *Unknown Admin Command*\n\nAvailable commands:\n• */next* - Call next token & notify user\n• */status* - Overview of queue counts & times\n• */queue* - Full roster of people in line with slots\n• */reset* - Clear today's queue to 0`;
               await sendWhatsAppMessage(ADMIN_PHONE, helpMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
             }
 
@@ -129,34 +125,39 @@ export default async function handler(req, res) {
           if (existingToken) {
             const currentServing = Number(await redisCommand(['GET', 'queue:currently_serving'], REDIS_URL, REDIS_TOKEN)) || 0;
             const ahead = Math.max(0, Number(existingToken) - currentServing);
-            const reminderMsg = `Hi! You already hold Token *#${existingToken}*.\nCurrently serving: *#${currentServing}*.\nPeople ahead: *${ahead}*.`;
+            const tokenSlot = getTokenTime(Number(existingToken));
+            const reminderMsg = `Hi! You already hold Token *#${existingToken}*.\n⏰ Estimated Slot: *${tokenSlot}*\nCurrently serving: *#${currentServing}*.\nPeople ahead: *${ahead}*.`;
             await sendWhatsAppMessage(from, reminderMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
           } else {
             // 1. Issue next token
             const newToken = await redisCommand(['INCR', 'queue:token_counter'], REDIS_URL, REDIS_TOKEN);
 
-            // 2. Map phone to token (expires in 24 hrs)
+            // 2. Compute scheduled time slot (starts at 10:00 AM, 15 min steps)
+            const timeSlot = getTokenTime(Number(newToken));
+
+            // 3. Map phone to token (expires in 24 hrs)
             await redisCommand(['SET', `user:${from}`, newToken, 'EX', '86400'], REDIS_URL, REDIS_TOKEN);
 
-            // 3. Store record in waiting list
+            // 4. Store record in waiting list
             const userRecord = JSON.stringify({
               token: newToken,
               name: rawText,
               phone: from,
+              timeSlot: timeSlot,
               timestamp: Date.now(),
             });
             await redisCommand(['RPUSH', 'queue:waiting_list', userRecord], REDIS_URL, REDIS_TOKEN);
 
-            // 4. Calculate position
+            // 5. Calculate position
             const currentServing = Number(await redisCommand(['GET', 'queue:currently_serving'], REDIS_URL, REDIS_TOKEN)) || 0;
             const peopleAhead = Math.max(0, Number(newToken) - currentServing - 1);
 
-            const userMsg = `Hi *${rawText}*!\n\nYour Token Number is: *#${newToken}*\nCurrently Serving: *#${currentServing || 1}*\nPeople ahead of you: *${peopleAhead}*`;
+            const userMsg = `Hi *${rawText}*!\n\nYour Token Number is: *#${newToken}*\n⏰ Estimated Time Slot: *${timeSlot}*\nCurrently Serving: *#${currentServing || 1}*\nPeople ahead of you: *${peopleAhead}*`;
             await sendWhatsAppMessage(from, userMsg, ACCESS_TOKEN, PHONE_NUMBER_ID);
 
-            // 5. Notify admin of new registrant
+            // 6. Notify admin of new registrant
             if (ADMIN_PHONE) {
-              const adminAlert = `🔔 *New Queue Entry*\n• Name: *${rawText}*\n• Phone: +${from}\n• Assigned Token: *#${newToken}*`;
+              const adminAlert = `🔔 *New Queue Entry*\n• Name: *${rawText}*\n• Phone: +${from}\n• Assigned Token: *#${newToken}*\n• Slot: *${timeSlot}*`;
               await sendWhatsAppMessage(ADMIN_PHONE, adminAlert, ACCESS_TOKEN, PHONE_NUMBER_ID);
             }
           }
@@ -167,6 +168,24 @@ export default async function handler(req, res) {
   }
 
   return res.status(405).send('Method Not Allowed');
+}
+
+// Calculates slot time starting at 10:00 AM with 15-minute increments
+function getTokenTime(tokenNumber) {
+  const startHour = 10;
+  const startMinute = 0;
+  const slotDurationMinutes = 15;
+
+  const totalMinutes = (startHour * 60) + startMinute + ((tokenNumber - 1) * slotDurationMinutes);
+
+  const hours24 = Math.floor(totalMinutes / 60) % 24;
+  const minutes = totalMinutes % 60;
+
+  const period = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+
+  const formattedMinutes = String(minutes).padStart(2, '0');
+  return `${hours12}:${formattedMinutes} ${period}`;
 }
 
 // Lightweight HTTP wrapper for Upstash Redis REST API
