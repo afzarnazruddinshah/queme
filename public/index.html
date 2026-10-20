@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Desk Queue Display</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #121826;
+      --border: #1e293b;
+      --accent: #2563eb;
+      --accent-glow: rgba(37, 99, 235, 0.35);
+      --green: #10b981;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--green);
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 24px;
+      flex: 1;
+    }
+
+    @media (max-width: 900px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Big Serving Hero Card */
+    .serving-card {
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      box-shadow: 0 0 60px var(--accent-glow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .serving-label {
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+    }
+
+    .token-number {
+      font-size: clamp(6rem, 18vw, 12rem);
+      font-weight: 800;
+      line-height: 1;
+      color: #fff;
+      text-shadow: 0 10px 40px rgba(37, 99, 235, 0.6);
+      margin: 10px 0;
+    }
+
+    .serving-details {
+      margin-top: 16px;
+      font-size: 1.6rem;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .serving-time {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 1.25rem;
+      margin-top: 6px;
+    }
+
+    /* Queue Up Next Card */
+    .upcoming-card {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .section-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .waiting-pill {
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 0.85rem;
+      padding: 4px 10px;
+      border-radius: 6px;
+      color: var(--text-muted);
+    }
+
+    .queue-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+    }
+
+    .queue-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 16px 20px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      transition: all 0.2s ease;
+    }
+
+    .item-token {
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: var(--accent);
+      min-width: 60px;
+    }
+
+    .item-name {
+      flex: 1;
+      font-weight: 600;
+      font-size: 1.05rem;
+      margin-left: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .item-slot {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .empty-state {
+      text-align: center;
+      color: var(--text-muted);
+      margin: auto 0;
+      padding: 40px 0;
+    }
+
+    footer {
+      margin-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span>Desk Display</span>
+    </div>
+    <div class="live-badge">
+      <span class="live-dot"></span>
+      <span>LIVE</span>
+    </div>
+  </header>
+
+  <main class="dashboard-grid">
+    <!-- Big Live Counter -->
+    <section class="card serving-card">
+      <div class="serving-label">Now Serving</div>
+      <div class="token-number" id="servingToken">--</div>
+      <div class="serving-details" id="servingName">Loading...</div>
+      <div class="serving-time" id="servingTime"></div>
+    </section>
+
+    <!-- Up Next List -->
+    <section class="card upcoming-card">
+      <div class="section-title">
+        <span>Up Next</span>
+        <span class="waiting-pill" id="waitingCount">0 Waiting</span>
+      </div>
+
+      <div class="queue-list" id="queueList">
+        <div class="empty-state">No visitors waiting in line.</div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Auto-refreshes every 4 seconds</span>
+    <span id="lastSynced">Syncing...</span>
+  </footer>
+
+  <script>
+    async function fetchQueueState() {
+      try {
+        const res = await fetch('/api/queue-status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Update Serving Hero
+        const tokenElem = document.getElementById('servingToken');
+        const nameElem = document.getElementById('servingName');
+        const timeElem = document.getElementById('servingTime');
+
+        if (data.serving.token > 0) {
+          tokenElem.textContent = '#' + data.serving.token;
+          nameElem.textContent = data.serving.name;
+          timeElem.textContent = 'Scheduled Slot: ' + data.serving.timeSlot;
+        } else {
+          tokenElem.textContent = '--';
+          nameElem.textContent = 'Queue Not Started';
+          timeElem.textContent = '';
+        }
+
+        // Update Waiting Badge
+        document.getElementById('waitingCount').textContent = `${data.stats.waitingCount} Waiting`;
+
+        // Update Upcoming List
+        const listContainer = document.getElementById('queueList');
+        if (data.upcoming && data.upcoming.length > 0) {
+          listContainer.innerHTML = data.upcoming.map(item => `
+            <div class="queue-item">
+              <span class="item-token">#${item.token}</span>
+              <span class="item-name">${item.name}</span>
+              <span class="item-slot">${item.timeSlot}</span>
+            </div>
+          `).join('');
+        } else {
+          listContainer.innerHTML = '<div class="empty-state">No upcoming visitors in queue.</div>';
+        }
+
+        document.getElementById('lastSynced').textContent = 'Last synced at ' + data.updatedAt;
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    }
+
+    // Initial fetch + 4-second poll interval
+    fetchQueueState();
+    setInterval(fetchQueueState, 4000);
+  </script>
+</body>
+</html>
