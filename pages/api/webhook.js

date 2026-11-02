@@ -1,3 +1,6 @@
+import { redis } from '../../lib/redis';
+import { getQueueKeys } from '../../lib/redisKeys';
+
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
   const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -20,8 +23,8 @@ export default async function handler(req, res) {
     const body = req.body;
 
     if (body.object && body.entry) {
-      const entry = body.entry[0]?.changes?.[0]?.value;
-      const messages = entry?.messages;
+      const entryValue = body.entry[0]?.changes?.[0]?.value;
+      const messages = entryValue?.messages;
 
       if (messages && messages[0]) {
         const message = messages[0];
@@ -29,10 +32,55 @@ export default async function handler(req, res) {
 
         if (message.type === 'text') {
           const userName = message.text.body.trim();
-          const replyText = `Hi ${userName}!`;
+
+          // 1. Extract dynamic metadata from Meta payload
+          const metadata = entryValue?.metadata;
+          const incomingPhoneId = metadata?.phone_number_id || PHONE_NUMBER_ID;
+          const displayPhoneNumber = metadata?.display_phone_number;
+
+          // 2. Resolve tenantId dynamically from Redis
+          let tenantId = null;
+          if (incomingPhoneId) {
+            tenantId = await redis.get(`phone:${incomingPhoneId}:tenant`);
+          }
+          if (!tenantId && displayPhoneNumber) {
+            tenantId = await redis.get(`phone:${displayPhoneNumber}:tenant`);
+          }
+
+          // Fallback if key is not yet set in Upstash
+          if (!tenantId) {
+            tenantId = 'neefa';
+          }
+
+          // 3. Derive multi-tenant keys
+          const keys = getQueueKeys(tenantId);
+
+          // 4. Increment counter & queue the token
+          let tokenNumber = 'A001';
+          try {
+            const tokenCounter = await redis.incr(keys.counter);
+            tokenNumber = `A${String(tokenCounter).padStart(3, '0')}`;
+
+            const tokenData = {
+              tokenNumber,
+              patientName: userName,
+              phoneNumber: from,
+              source: 'whatsapp',
+              createdAt: new Date().toISOString(),
+              status: 'waiting',
+            };
+
+            await redis.rpush(keys.queue, JSON.stringify(tokenData));
+          } catch (redisErr) {
+            console.error('Redis token creation error:', redisErr);
+          }
+
+          // 5. Send confirmation message back to WhatsApp
+          const replyText = `Hi ${userName}! Your token number is ${tokenNumber}. Please wait for your turn.`;
+          const targetPhoneId = incomingPhoneId || PHONE_NUMBER_ID;
 
           try {
-            await fetch(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
+            await fetch(`https://graph.facebook.com/v21.0/${targetPhoneId}/messages`, {
               method: 'POST',
               headers: {
                 Authorization: `Bearer ${ACCESS_TOKEN}`,
