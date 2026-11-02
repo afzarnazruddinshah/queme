@@ -61,10 +61,14 @@ export default async function handler(req, res) {
             const tokenCounter = await redis.incr(keys.counter);
             tokenNumber = `A${String(tokenCounter).padStart(3, '0')}`;
 
+const patientName =
+  entryValue?.contacts?.[0]?.profile?.name ||
+  message.text?.body?.trim() ||
+  'WhatsApp Patient';
             const tokenData = {
               tokenNumber,
-              patientName: userName,
-              phoneNumber: from,
+              patientName: patientName,
+              phoneNumber: from || message.from || '—',
               source: 'whatsapp',
               createdAt: new Date().toISOString(),
               status: 'waiting',
