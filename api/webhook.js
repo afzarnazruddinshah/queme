@@ -1,3 +1,4 @@
+import { redis } from '../lib/redis.js';
 import { registerUserToken, cancelUserToken } from '../lib/queue.js';
 import { handleAdminCommand } from '../lib/admin.js';
 import { sendWhatsAppText } from '../lib/whatsapp.js';
@@ -24,14 +25,32 @@ export default async function handler(req, res) {
     if (message) {
       const from = message.from;
 
+      // Extract Meta metadata to resolve tenantId dynamically
+      const metadata = entry?.metadata;
+      const incomingPhoneId = metadata?.phone_number_id;
+      const displayPhoneNumber = metadata?.display_phone_number;
+
+      let tenantId = null;
+      if (incomingPhoneId) {
+        tenantId = await redis.get(`phone:${incomingPhoneId}:tenant`);
+      }
+      if (!tenantId && displayPhoneNumber) {
+        tenantId = await redis.get(`phone:${displayPhoneNumber}:tenant`);
+      }
+
+      // Default fallback
+      if (!tenantId) {
+        tenantId = 'neefa';
+      }
+
       // Case A: Interactive Button Reply clicked
       if (message.type === 'interactive') {
         const buttonId = message.interactive?.button_reply?.id;
 
         if (buttonId === 'btn_cancel') {
-          await cancelUserToken(from);
+          await cancelUserToken(from, tenantId);
         } else if (buttonId === 'btn_status') {
-          await registerUserToken(from, ''); // Triggers current status & buttons
+          await registerUserToken(from, '', tenantId);
         }
       }
 
@@ -41,18 +60,18 @@ export default async function handler(req, res) {
 
         // 1. Admin Commands (bypasses AI)
         if (from === ADMIN_PHONE && text.startsWith('/')) {
-          await handleAdminCommand(ADMIN_PHONE, text);
+          await handleAdminCommand(ADMIN_PHONE, text, tenantId);
         }
         // 2. Quick text cancellation (bypasses AI)
         else if (text.toLowerCase() === 'cancel') {
-          await cancelUserToken(from);
+          await cancelUserToken(from, tenantId);
         }
         // 3. User Input routed through Gemini
         else {
           const aiResult = await parseMessageWithAI(text);
 
           if (aiResult.action === 'CREATE_TOKEN' && aiResult.name) {
-            await registerUserToken(from, aiResult.name);
+            await registerUserToken(from, aiResult.name, tenantId);
           } else {
             // Case 1: Greeting, random text, or missing name
             await sendWhatsAppText(from, 'Please enter your name to generate token.');
