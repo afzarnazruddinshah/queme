@@ -1,4 +1,4 @@
-import { redis } from '../lib/redis.js';
+import { redisCommand } from '../lib/redis.js';
 import { registerUserToken, cancelUserToken } from '../lib/queue.js';
 import { handleAdminCommand } from '../lib/admin.js';
 import { sendWhatsAppText } from '../lib/whatsapp.js';
@@ -31,11 +31,15 @@ export default async function handler(req, res) {
       const displayPhoneNumber = metadata?.display_phone_number;
 
       let tenantId = null;
-      if (incomingPhoneId) {
-        tenantId = await redis.get(`phone:${incomingPhoneId}:tenant`);
-      }
-      if (!tenantId && displayPhoneNumber) {
-        tenantId = await redis.get(`phone:${displayPhoneNumber}:tenant`);
+      try {
+        if (incomingPhoneId) {
+          tenantId = await redisCommand(['GET', `phone:${incomingPhoneId}:tenant`]);
+        }
+        if (!tenantId && displayPhoneNumber) {
+          tenantId = await redisCommand(['GET', `phone:${displayPhoneNumber}:tenant`]);
+        }
+      } catch (err) {
+        console.error('Error fetching tenant from redis:', err);
       }
 
       // Default fallback
