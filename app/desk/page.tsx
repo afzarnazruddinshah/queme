@@ -18,7 +18,8 @@ interface Patient {
 export default function DeskDashboard({ searchParams }: { searchParams?: { tenantId?: string } }) {
   // Read tenantId from Next.js useSearchParams for reliability in client components
   const browserSearchParams = useSearchParams();
-  const rawTenantId = browserSearchParams.get('tenantId') || searchParams?.tenantId || 'neefa';
+    const rawTenantId = browserSearchParams?.get('tenantId') || searchParams?.tenantId || 'neefa';
+
   const tenantId = rawTenantId.toLowerCase().trim();
 
   // Authentication States
