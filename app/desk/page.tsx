@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
+
 import { useSearchParams } from 'next/navigation';
 import { Stethoscope, UserPlus, RefreshCw, ShieldCheck, Lock, AlertCircle, Loader2 } from 'lucide-react';
 import ActiveTokenCard from './_components/ActiveTokenCard';
@@ -15,7 +16,8 @@ interface Patient {
   createdAt?: string;
 }
 
-export default function DeskDashboard({ searchParams }: { searchParams?: { tenantId?: string } }) {
+function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: string } }) {
+
   // Read tenantId from Next.js useSearchParams for reliability in client components
   const browserSearchParams = useSearchParams();
     const rawTenantId = browserSearchParams?.get('tenantId') || searchParams?.tenantId || 'neefa';
@@ -279,5 +281,17 @@ export default function DeskDashboard({ searchParams }: { searchParams?: { tenan
       />
 
     </div>
+  );
+}
+
+export default function DeskDashboard(props: { searchParams?: { tenantId?: string } }) {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+      </div>
+    }>
+      <DeskDashboardContent {...props} />
+    </Suspense>
   );
 }
