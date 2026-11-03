@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { redisCommand } from '@/lib/redis';
+import { redisCommand } from '../../../../lib/redis.js';
+
 
 // 1. GET: Verify if the browser already holds a valid 30-day session cookie
 export async function GET(req: NextRequest) {
