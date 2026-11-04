@@ -3,7 +3,7 @@ import { Redis } from '@upstash/redis';
 
 const redis = Redis.fromEnv();
 
-export const CLINIC_CONFIG = {
+const CLINIC_CONFIG = {
   startHour: 10,
   startMinute: 0,
   closeHour: 22,
