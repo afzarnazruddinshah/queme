@@ -13,7 +13,6 @@ export async function POST(request: Request) {
     const { searchParams } = new URL(request.url);
     const body = await request.json().catch(() => ({}));
     
-    // Support tenantId from query param or body, defaulting to neefa
     const rawTenant = searchParams.get('tenantId') || body.tenantId || 'neefa';
     const tenantId = rawTenant.toLowerCase().trim();
     const tokenNumber = body.tokenNumber || body.token;
@@ -30,7 +29,7 @@ export async function POST(request: Request) {
     let cancelledName: string | null = null;
     let foundAndRemoved = false;
 
-    // 1. Check if the token being cancelled is currently in "Now Serving"
+    // 1. Check if token is currently in "Now Serving"
     const keyServing = `tenant:${tenantId}:now_serving`;
     const keyAltServing = `tenant:${tenantId}:currently_serving`;
     const rawServing = await redis.get(keyServing);
@@ -49,7 +48,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2. Check and remove from the waiting queue list
+    // 2. Check and remove from waiting queue list
     const queueKey = `tenant:${tenantId}:queue`;
     const queueItems = (await redis.lrange(queueKey, 0, -1)) || [];
 
@@ -60,8 +59,13 @@ export async function POST(request: Request) {
       if (itemDigits === targetDigits || parsed.tokenNumber === tokenNumber || parsed.token === tokenNumber) {
         const itemString = typeof item === 'string' ? item : JSON.stringify(item);
         
-        // Remove exactly this entry from the Redis list
+        // Remove entry from queue
         await redis.lrem(queueKey, 1, itemString);
+
+        // Record cancelled slot for gap backfilling (>= 30 mins rule)
+        if (targetDigits) {
+          await redis.rpush(`tenant:${tenantId}:cancelled_slots`, targetDigits);
+        }
         
         cancelledPhone = cancelledPhone || parsed.phoneNumber || parsed.phone || null;
         cancelledName = cancelledName || parsed.patientName || parsed.name || null;
@@ -77,7 +81,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Clear WhatsApp patient session lock so patient can re-book
+    // 3. Clear WhatsApp patient session lock
     if (cancelledPhone && cancelledPhone !== 'WALK_IN' && cancelledPhone !== '—') {
       const cleanPhone = cancelledPhone.replace(/\D/g, '');
       await redis.del(`tenant:${tenantId}:user:${cleanPhone}`);
