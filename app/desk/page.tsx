@@ -1,12 +1,22 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, Suspense } from 'react';
-
 import { useSearchParams } from 'next/navigation';
-import { Stethoscope, UserPlus, RefreshCw, ShieldCheck, Lock, AlertCircle, Loader2 } from 'lucide-react';
+import {
+  Stethoscope,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Lock,
+  AlertCircle,
+  Loader2,
+  Settings,
+} from 'lucide-react';
 import ActiveTokenCard from './_components/ActiveTokenCard';
 import QueueTable from './_components/QueueTable';
 import NewTokenModal from './_components/NewTokenModal';
+import SettingsDrawer from './_components/SettingsDrawer';
+import ChangePinModal from './_components/ChangePinModal';
 
 interface Patient {
   tokenNumber: string;
@@ -17,12 +27,12 @@ interface Patient {
 }
 
 function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: string } }) {
-
-  // Read tenantId from Next.js useSearchParams for reliability in client components
   const browserSearchParams = useSearchParams();
-    const rawTenantId = browserSearchParams?.get('tenantId') || searchParams?.tenantId || 'neefa';
-
+  const rawTenantId = browserSearchParams?.get('tenantId') || searchParams?.tenantId || 'neefa';
   const tenantId = rawTenantId.toLowerCase().trim();
+
+  // Dynamic branding: "Neefa AdminDesk"
+  const formattedTenantTitle = `${tenantId.charAt(0).toUpperCase() + tenantId.slice(1)} AdminDesk`;
 
   // Authentication States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -36,8 +46,11 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
   const [nextPatient, setNextPatient] = useState<Patient | null>(null);
   const [waitingQueue, setWaitingQueue] = useState<Patient[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Modals & Drawer States
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isChangePinOpen, setIsChangePinOpen] = useState<boolean>(false);
 
   // 1. Check existing session cookie on load
   useEffect(() => {
@@ -70,7 +83,6 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
         setNowServing(result.data.nowServing);
         setNextPatient(result.data.nextPatient);
         setWaitingQueue(result.data.waitingQueue || []);
-        setLastRefreshed(new Date());
       }
     } catch (err) {
       console.error('Failed to fetch queue data:', err);
@@ -116,11 +128,17 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
         setAuthError(data.message || 'Invalid PIN. Please try again.');
         setPin('');
       }
-    } catch (err) {
+    } catch {
       setAuthError('Network error. Check connection and retry.');
     } finally {
       setIsAuthenticating(false);
     }
+  };
+
+  // 5. Handle Locking Desk Session
+  const handleLockSession = () => {
+    setIsAuthenticated(false);
+    setPin('');
   };
 
   // -------------------------------------------------------------
@@ -147,7 +165,7 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
             <div className="h-12 w-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 mb-3 shadow-sm">
               <Lock className="h-6 w-6" />
             </div>
-            <h1 className="text-lg font-bold text-gray-900">Reception Desk Access</h1>
+            <h1 className="text-lg font-bold text-gray-900">{formattedTenantTitle}</h1>
             <p className="text-xs text-gray-500 mt-1">
               Clinic Code: <strong className="text-gray-800 font-mono uppercase">{tenantId}</strong>
             </p>
@@ -208,44 +226,56 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
   return (
     <div className="min-h-screen bg-gray-50/50 text-gray-900 pb-12">
       
-      {/* Top Header Navigation Bar */}
-      <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-gray-100 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      {/* Top Header Navigation Bar - Mobile Responsive & Realigned */}
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-100 shadow-xs">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
           
-          {/* Clinic Brand & Title */}
-          <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-              <Stethoscope className="h-5 w-5" />
+          {/* Clinic Brand & Title (Truncates cleanly if space is tight) */}
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/30 shrink-0">
+              <Stethoscope className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
-            <div>
-              <h1 className="text-base font-bold text-gray-900 leading-tight">Neefa Solutions Desk</h1>
-              <div className="flex items-center space-x-2 text-xs text-gray-400 font-medium">
-                <span>Tenant: <strong className="text-gray-600">{tenantId}</strong></span>
+            <div className="min-w-0">
+              <h1 className="text-sm sm:text-base font-bold text-gray-900 leading-tight truncate">
+                {formattedTenantTitle}
+              </h1>
+              <div className="flex items-center space-x-1.5 text-[11px] text-gray-400 font-medium">
+                <span className="truncate">Tenant: <strong className="text-gray-600 uppercase font-mono">{tenantId}</strong></span>
                 <span>•</span>
-                <span className="inline-flex items-center text-emerald-600 font-semibold">
-                  <ShieldCheck className="h-3 w-3 mr-0.5" /> Secure Live
+                <span className="inline-flex items-center text-emerald-600 font-semibold shrink-0">
+                  <ShieldCheck className="h-3 w-3 mr-0.5" /> Live
                 </span>
               </div>
             </div>
           </div>
 
           {/* Header Action Controls */}
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+            {/* Refresh Queue */}
             <button
               onClick={fetchQueueData}
               title="Refresh Queue"
-              className="p-2.5 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-800 transition"
+              className="p-2 sm:p-2.5 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-800 transition"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
 
-            {/* Prominent New Walk-in Token Button */}
+            {/* + New Token Button */}
             <button
               onClick={() => setIsModalOpen(true)}
-              className="inline-flex items-center space-x-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition"
+              className="inline-flex items-center space-x-1.5 rounded-xl bg-blue-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white shadow-sm shadow-blue-500/30 hover:bg-blue-700 active:scale-[0.98] transition"
             >
-              <UserPlus className="h-4 w-4" />
-              <span>New Walk-In Token</span>
+              <Plus className="h-4 w-4" />
+              <span>New Token</span>
+            </button>
+
+            {/* Settings Trigger */}
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              title="Clinic Settings"
+              className="p-2 sm:p-2.5 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-800 transition"
+            >
+              <Settings className="h-4 w-4" />
             </button>
           </div>
 
@@ -253,7 +283,7 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
       </header>
 
       {/* Main Content Dashboard Body */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
         
         {/* Step 3 Component: Now Serving & Next Patient Cards */}
         <ActiveTokenCard
@@ -272,12 +302,28 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
 
       </main>
 
-      {/* Step 2 Component: New Walk-In Token Modal Form */}
+      {/* Modal: New Walk-In Token Form */}
       <NewTokenModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         tenantId={tenantId}
         onTokenAdded={fetchQueueData}
+      />
+
+      {/* Drawer: Clinic Settings Navigation */}
+      <SettingsDrawer
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        tenantId={tenantId}
+        onOpenChangePin={() => setIsChangePinOpen(true)}
+        onLockSession={handleLockSession}
+      />
+
+      {/* Modal: Change 6-Digit PIN */}
+      <ChangePinModal
+        isOpen={isChangePinOpen}
+        onClose={() => setIsChangePinOpen(false)}
+        tenantId={tenantId}
       />
 
     </div>
