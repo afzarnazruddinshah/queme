@@ -1,34 +1,45 @@
 import { redisCommand } from '../lib/redis.js';
-import { sendWhatsAppText } from '../lib/whatsapp.js';
 
 export default async function handler(req, res) {
-  // 1. Optional security check: Verify the call is genuinely from Vercel's Cron scheduler
-  const authHeader = req.headers['authorization'];
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const adminPhone = (process.env.ADMIN_PHONE || '').replace(/\D/g, '');
-
   try {
-    // 2. Clear current day's queue counters and waiting list
-    await redisCommand(['DEL', 'queue:token_counter', 'queue:currently_serving', 'queue:waiting_list']);
+    const authHeader = req.headers['authorization'];
+    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
 
-    // 3. Clear all user phone-to-token mappings
-    const userKeys = (await redisCommand(['KEYS', 'user:*'])) || [];
+    const tenantId = (req.query.tenantId || 'neefa').toLowerCase().trim();
+
+    // 1. Delete all queue, counter, now_serving, and cancelled gap keys
+    await redisCommand([
+      'DEL',
+      `tenant:${tenantId}:counter`,
+      `tenant:${tenantId}:queue`,
+      `tenant:${tenantId}:now_serving`,
+      `tenant:${tenantId}:currently_serving`,
+      `tenant:${tenantId}:next_patient`,
+      `tenant:${tenantId}:cancelled_slots`,
+      'queue:waiting_list',
+      'queue:token_counter',
+      'queue:currently_serving',
+    ]);
+
+    // 2. Remove all active patient phone session locks
+    const userKeys = (await redisCommand(['KEYS', `tenant:${tenantId}:user:*`])) || [];
     if (userKeys.length > 0) {
       await redisCommand(['DEL', ...userKeys]);
     }
 
-    // 4. Send morning confirmation to Admin
-    if (adminPhone) {
-      const morningMsg = `🌅 *Good morning!*\n\nToday's queue has been automatically reset to 0. Ready for new tokens!`;
-      await sendWhatsAppText(adminPhone, morningMsg);
+    const legacyUserKeys = (await redisCommand(['KEYS', 'user:*'])) || [];
+    if (legacyUserKeys.length > 0) {
+      await redisCommand(['DEL', ...legacyUserKeys]);
     }
 
-    return res.status(200).json({ status: 'queue_reset_successful' });
+    return res.status(200).json({
+      success: true,
+      message: `Daily queue and slots reset successfully for tenant: ${tenantId}`,
+    });
   } catch (error) {
-    console.error('Daily cron reset failed:', error);
-    return res.status(500).json({ error: 'Failed to reset queue' });
+    console.error('Cron reset error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to reset queue' });
   }
 }
