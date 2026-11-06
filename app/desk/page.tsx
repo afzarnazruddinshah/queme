@@ -11,12 +11,14 @@ import {
   AlertCircle,
   Loader2,
   Settings,
+  CalendarOff,
 } from 'lucide-react';
 import ActiveTokenCard from './_components/ActiveTokenCard';
 import QueueTable from './_components/QueueTable';
 import NewTokenModal from './_components/NewTokenModal';
 import SettingsDrawer from './_components/SettingsDrawer';
 import ChangePinModal from './_components/ChangePinModal';
+import OooModal from './_components/OooModal';
 
 interface Patient {
   tokenNumber: string;
@@ -47,10 +49,15 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
   const [waitingQueue, setWaitingQueue] = useState<Patient[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
+  // OOO State (Rule 2: Auto-disable button during OOO)
+  const [isOooActive, setIsOooActive] = useState<boolean>(false);
+  const [oooMessage, setOooMessage] = useState<string>('');
+
   // Modals & Drawer States
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isChangePinOpen, setIsChangePinOpen] = useState<boolean>(false);
+  const [isOooModalOpen, setIsOooModalOpen] = useState<boolean>(false);
 
   // 1. Check existing session cookie on load
   useEffect(() => {
@@ -71,21 +78,59 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
     verifySession();
   }, []);
 
-  // 2. Fetch queue data from backend API
+  // 2. Fetch queue data and OOO status from backend API
   const fetchQueueData = useCallback(async () => {
     if (!isAuthenticated) return;
 
     try {
-      const response = await fetch(`/api/desk?tenantId=${tenantId}`);
-      const result = await response.json();
+      // Parallel fetch: Queue state + OOO configuration
+      const [queueRes, oooRes] = await Promise.all([
+        fetch(`/api/desk?tenantId=${tenantId}`),
+        fetch(`/api/desk/ooo?tenantId=${tenantId}`),
+      ]);
 
-      if (result.success && result.data) {
-        setNowServing(result.data.nowServing);
-        setNextPatient(result.data.nextPatient);
-        setWaitingQueue(result.data.waitingQueue || []);
+      const queueResult = await queueRes.json();
+      if (queueResult.success && queueResult.data) {
+        setNowServing(queueResult.data.nowServing);
+        setNextPatient(queueResult.data.nextPatient);
+        setWaitingQueue(queueResult.data.waitingQueue || []);
+      }
+
+      const oooResult = await oooRes.json();
+      if (oooResult.success && oooResult.config) {
+        const config = oooResult.config;
+        if (!config.enabled) {
+          setIsOooActive(false);
+          setOooMessage('');
+        } else {
+          // Verify current time against scheduled range
+          const now = new Date();
+          const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+          const istMinutes = (utcMinutes + 330) % 1440;
+
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const todayStr = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}`;
+
+          let withinDates = true;
+          if (config.startDate && todayStr < config.startDate) withinDates = false;
+          if (config.endDate && todayStr > config.endDate) withinDates = false;
+
+          let withinTimes = true;
+          if (config.startTime && config.endTime) {
+            const [sH, sM] = config.startTime.split(':').map(Number);
+            const [eH, eM] = config.endTime.split(':').map(Number);
+            const startMin = sH * 60 + sM;
+            const endMin = eH * 60 + eM;
+            if (istMinutes < startMin || istMinutes > endMin) withinTimes = false;
+          }
+
+          const currentlyOoo = withinDates && withinTimes;
+          setIsOooActive(currentlyOoo);
+          setOooMessage(config.message || 'Clinic is currently Out of Office.');
+        }
       }
     } catch (err) {
-      console.error('Failed to fetch queue data:', err);
+      console.error('Failed to fetch dashboard data:', err);
     } finally {
       setLoading(false);
     }
@@ -260,13 +305,28 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
 
-            {/* + New Token Button */}
+            {/* + New Token Button (Disabled when OOO is active) */}
             <button
+              disabled={isOooActive}
               onClick={() => setIsModalOpen(true)}
-              className="inline-flex items-center space-x-1.5 rounded-xl bg-blue-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white shadow-sm shadow-blue-500/30 hover:bg-blue-700 active:scale-[0.98] transition"
+              title={isOooActive ? `Clinic is OOO: ${oooMessage}` : 'Create Walk-In Token'}
+              className={`inline-flex items-center space-x-1.5 rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition ${
+                isOooActive
+                  ? 'bg-amber-600/70 hover:bg-amber-600/70 cursor-not-allowed opacity-80 shadow-none'
+                  : 'bg-blue-600 shadow-sm shadow-blue-500/30 hover:bg-blue-700 active:scale-[0.98]'
+              }`}
             >
-              <Plus className="h-4 w-4" />
-              <span>New Token</span>
+              {isOooActive ? (
+                <>
+                  <CalendarOff className="h-4 w-4" />
+                  <span>OOO Active</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4" />
+                  <span>New Token</span>
+                </>
+              )}
             </button>
 
             {/* Settings Trigger */}
@@ -285,6 +345,30 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
       {/* Main Content Dashboard Body */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
         
+        {/* Active OOO Notice Banner */}
+        {isOooActive && (
+          <div className="mb-6 p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-start justify-between shadow-xs">
+            <div className="flex items-start space-x-3">
+              <CalendarOff className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-xs font-bold text-amber-900 uppercase tracking-wide">
+                  Out of Office Mode Active
+                </h3>
+                <p className="text-xs text-amber-800 mt-0.5">{oooMessage}</p>
+                <p className="text-[11px] text-amber-700/80 mt-1">
+                  Walk-in and WhatsApp token registrations are paused.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsOooModalOpen(true)}
+              className="text-xs font-semibold text-amber-700 underline hover:text-amber-900 shrink-0 ml-3"
+            >
+              Edit
+            </button>
+          </div>
+        )}
+
         {/* Step 3 Component: Now Serving & Next Patient Cards */}
         <ActiveTokenCard
           tenantId={tenantId}
@@ -316,6 +400,7 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
         onClose={() => setIsSettingsOpen(false)}
         tenantId={tenantId}
         onOpenChangePin={() => setIsChangePinOpen(true)}
+        onOpenOoo={() => setIsOooModalOpen(true)}
         onLockSession={handleLockSession}
       />
 
@@ -324,6 +409,14 @@ function DeskDashboardContent({ searchParams }: { searchParams?: { tenantId?: st
         isOpen={isChangePinOpen}
         onClose={() => setIsChangePinOpen(false)}
         tenantId={tenantId}
+      />
+
+      {/* Modal: Out of Office Schedule & Message */}
+      <OooModal
+        isOpen={isOooModalOpen}
+        onClose={() => setIsOooModalOpen(false)}
+        tenantId={tenantId}
+        onOooUpdated={fetchQueueData}
       />
 
     </div>
