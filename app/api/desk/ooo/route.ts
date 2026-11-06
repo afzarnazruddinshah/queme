@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
-import { broadcastOooToWaitingPatients } from '../../../lib/ooo.js';
+import { broadcastOooToWaitingPatients } from '../../../../lib/ooo.js';
 
 const redis = Redis.fromEnv();
 
