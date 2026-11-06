@@ -9,6 +9,7 @@ interface SettingsDrawerProps {
   tenantId: string;
   onOpenChangePin: () => void;
   onLockSession: () => void;
+  onOpenOoo: () => void;
 }
 
 export default function SettingsDrawer({
@@ -17,6 +18,7 @@ export default function SettingsDrawer({
   tenantId,
   onOpenChangePin,
   onLockSession,
+onOpenOoo
 }: SettingsDrawerProps) {
   if (!isOpen) return null;
 
