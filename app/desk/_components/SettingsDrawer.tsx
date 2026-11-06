@@ -73,8 +73,9 @@ export default function SettingsDrawer({
             {/* 2. Unified OOO Schedule & Auto-Reply */}
             <button
               onClick={() => {
-                alert('Out of Office Schedule & Auto-Reply configuration coming soon.');
-              }}
+    onClose();
+    onOpenOoo();
+  }}
               className="w-full flex items-center justify-between p-3.5 rounded-2xl border border-gray-100 bg-white shadow-xs hover:border-blue-200 hover:bg-blue-50/40 active:bg-blue-50 transition text-left group"
             >
               <div className="flex items-center space-x-3">
