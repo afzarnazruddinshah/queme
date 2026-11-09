@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
+import { authorizeDeskRequest } from '../../../../../lib/deskAuth';
 
 const redis = Redis.fromEnv();
 
@@ -9,6 +10,13 @@ export async function POST(request: Request) {
     const { tenantId = 'neefa', currentPin, newPin } = body;
 
     const cleanTenant = String(tenantId).toLowerCase().trim();
+
+    // Rule 3: Validate desk session cookie before mutating Redis
+    const auth = await authorizeDeskRequest(cleanTenant);
+    if (!auth.authorized) {
+      return auth.errorResponse!;
+    }
+
     const cleanCurrentPin = String(currentPin || '').trim();
     const cleanNewPin = String(newPin || '').trim();
 
