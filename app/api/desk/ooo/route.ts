@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { broadcastOooToWaitingPatients } from '../../../../lib/ooo.js';
+import { authorizeDeskRequest } from '../../../../lib/deskAuth';
 
 const redis = Redis.fromEnv();
 
-// GET: Fetch current OOO schedule and message
+// GET: Fetch current OOO schedule and message (desk dashboard & status check)
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -46,7 +47,16 @@ export async function POST(request: Request) {
     } = body;
 
     const cleanTenant = String(tenantId).toLowerCase().trim();
-    const cleanMessage = String(message).trim() || 'The doctor is currently Out of Office. Token registrations are temporarily paused.';
+
+    // Rule 3: Validate desk session cookie before mutating Redis or sending broadcasts
+    const auth = await authorizeDeskRequest(cleanTenant);
+    if (!auth.authorized) {
+      return auth.errorResponse!;
+    }
+
+    const cleanMessage =
+      String(message).trim() ||
+      'The doctor is currently Out of Office. Token registrations are temporarily paused.';
 
     const oooPayload = {
       enabled: Boolean(enabled),
