@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
+import { authorizeDeskRequest } from '../../../../lib/deskAuth';
 
 const redis = Redis.fromEnv();
 
@@ -15,6 +16,13 @@ export async function POST(request: Request) {
     
     const rawTenant = searchParams.get('tenantId') || body.tenantId || 'neefa';
     const tenantId = rawTenant.toLowerCase().trim();
+
+    // Rule 3: Validate desk session cookie before executing any mutation
+    const auth = await authorizeDeskRequest(tenantId);
+    if (!auth.authorized) {
+      return auth.errorResponse!;
+    }
+
     const tokenNumber = body.tokenNumber || body.token;
 
     if (!tokenNumber) {
