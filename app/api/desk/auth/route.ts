@@ -1,25 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
-import crypto from 'crypto';
 import { redisCommand } from '../../../../lib/redis.js';
+import {
+  checkLockout,
+  recordFailedAttempt,
+  clearFailedAttempts,
+  setDeskSessionCookie,
+  verifySessionToken,
+} from '../../../../lib/deskAuth';
 
+function getClientIp(req: NextRequest): string {
+  const forwarded = req.headers.get('x-forwarded-for');
+  if (forwarded) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.headers.get('x-real-ip') || 'unknown-ip';
+}
 
-// 1. GET: Verify if the browser already holds a valid 30-day session cookie
+// 1. GET: Verify existing HMAC-signed session cookie on page load
 export async function GET(req: NextRequest) {
   try {
     const sessionCookie = req.cookies.get('desk_session')?.value;
+    const { searchParams } = new URL(req.url);
+    const tenantId = (searchParams.get('tenantId') || 'neefa').toLowerCase().trim();
+
     if (!sessionCookie) {
       return NextResponse.json({ authenticated: false }, { status: 401 });
     }
 
-    const sessionData = await redisCommand(['GET', `session:${sessionCookie}`]);
-    if (!sessionData) {
+    const isValid = verifySessionToken(sessionCookie, tenantId);
+    if (!isValid) {
       return NextResponse.json({ authenticated: false }, { status: 401 });
     }
 
-    const parsed = typeof sessionData === 'string' ? JSON.parse(sessionData) : sessionData;
     return NextResponse.json({
       authenticated: true,
-      tenantId: parsed.tenantId,
+      tenantId,
     });
   } catch (error) {
     console.error('Session verification error:', error);
@@ -30,7 +45,7 @@ export async function GET(req: NextRequest) {
 // 2. POST: Authenticate Clinic Code + 6-Digit PIN
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { clinicCode, pin } = body;
 
     if (!clinicCode || !pin) {
@@ -42,56 +57,55 @@ export async function POST(req: NextRequest) {
 
     const tenantId = String(clinicCode).trim().toLowerCase();
     const enteredPin = String(pin).trim();
+    const clientIp = getClientIp(req);
 
-    // Rate-limiting check: 5 failed attempts locks out for 15 minutes
-    const attemptsKey = `tenant:${tenantId}:pin_attempts`;
-    const attempts = Number(await redisCommand(['GET', attemptsKey])) || 0;
-    if (attempts >= 5) {
+    // Rule 1: Check if tenant/IP is currently locked out (30 mins after 3 failed attempts)
+    const lockStatus = await checkLockout(tenantId, clientIp);
+    if (lockStatus.locked) {
       return NextResponse.json(
-        { success: false, message: 'Too many incorrect attempts. Locked for 15 minutes.' },
+        {
+          success: false,
+          message: `Desk locked due to 3 failed attempts. Try again in ${lockStatus.remainingMinutes} minute(s).`,
+        },
         { status: 429 }
       );
     }
 
-    // Verify against Redis key (e.g. tenant:neefa:desk_pin)
-    const storedPin = await redisCommand(['GET', `tenant:${tenantId}:desk_pin`]);
-    if (!storedPin || String(storedPin).trim() !== enteredPin) {
-      const currentAttempts = await redisCommand(['INCR', attemptsKey]);
-      if (currentAttempts === 1) {
-        await redisCommand(['EXPIRE', attemptsKey, '900']); // 15 mins lock
+    // Lookup PIN from Redis (fallback to env or default '123456')
+    const storedPin =
+      (await redisCommand(['GET', `tenant:${tenantId}:desk_pin`])) ||
+      process.env.DESK_DEFAULT_PIN ||
+      '123456';
+
+    // Verify PIN
+    if (String(storedPin).trim() !== enteredPin) {
+      const attemptResult = await recordFailedAttempt(tenantId, clientIp);
+
+      if (attemptResult.locked) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: 'Too many incorrect attempts. Desk is locked for 30 minutes.',
+          },
+          { status: 429 }
+        );
       }
+
       return NextResponse.json(
-        { success: false, message: 'Invalid Clinic Code or PIN.' },
+        {
+          success: false,
+          message: `Invalid PIN. ${attemptResult.remainingAttempts} attempt(s) remaining before a 30-minute lock.`,
+        },
         { status: 401 }
       );
     }
 
-    // Clear failed attempts on success
-    await redisCommand(['DEL', attemptsKey]);
+    // Successful login: reset lockout counter
+    await clearFailedAttempts(tenantId, clientIp);
 
-    // Create session token stored in Redis with 30-day persistence
-    const sessionToken = crypto.randomUUID();
-    const maxAgeSeconds = 60 * 60 * 24 * 30; // 30 days
-
-    await redisCommand([
-      'SET',
-      `session:${sessionToken}`,
-      JSON.stringify({ tenantId, createdAt: new Date().toISOString() }),
-      'EX',
-      String(maxAgeSeconds),
-    ]);
-
-    // Set HttpOnly persistent cookie
+    // Rule 2: Create response and attach HttpOnly, SameSite=Lax, Secure HMAC signed cookie
     const response = NextResponse.json({ success: true, tenantId });
-    response.cookies.set({
-      name: 'desk_session',
-      value: sessionToken,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: maxAgeSeconds,
-    });
+    await setDeskSessionCookie(response, tenantId);
 
     return response;
   } catch (error) {
