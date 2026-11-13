@@ -4,6 +4,8 @@ import { registerUserToken, cancelUserToken } from '../lib/queue.js';
 import { handleAdminCommand } from '../lib/admin.js';
 import { sendWhatsAppText } from '../lib/whatsapp.js';
 import { parseMessageWithAI } from '../lib/gemini.js';
+import { checkAndRecordCancel, checkRateLimit } from '../lib/validators.js';
+
 
 // 1. Disable Next.js automatic body parser so we can verify the raw byte stream
 export const config = {
