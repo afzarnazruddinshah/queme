@@ -111,13 +111,21 @@ export default async function handler(req, res) {
         tenantId = 'neefa';
       }
 
-      // Case A: Interactive Button Reply clicked
+            // Case A: Interactive Button Reply clicked
       if (message.type === 'interactive') {
         const buttonId = message.interactive?.button_reply?.id;
 
         if (buttonId === 'btn_cancel') {
-          await cancelUserToken(from, tenantId);
-        } else if (buttonId === 'btn_status') {
+          // Rule 2 check
+          const cancelCheck = await checkAndRecordCancel(from, tenantId);
+          if (!cancelCheck.allowed) {
+            await sendWhatsAppText(from, cancelCheck.message);
+          } else {
+            await cancelUserToken(from, tenantId);
+          }
+        }
+        // btn_status is removed, but we keep this block just in case legacy buttons are clicked
+        else if (buttonId === 'btn_status') {
           await registerUserToken(from, '', tenantId);
         }
       }
@@ -130,23 +138,34 @@ export default async function handler(req, res) {
         if (from === ADMIN_PHONE && text.startsWith('/')) {
           await handleAdminCommand(ADMIN_PHONE, text, tenantId);
         }
-        // 2. Quick text cancellation (bypasses AI)
+        // 2. Quick text cancellation
         else if (text.toLowerCase() === 'cancel') {
-          await cancelUserToken(from, tenantId);
+          const cancelCheck = await checkAndRecordCancel(from, tenantId);
+          if (!cancelCheck.allowed) {
+            await sendWhatsAppText(from, cancelCheck.message);
+          } else {
+            await cancelUserToken(from, tenantId);
+          }
         }
         // 3. User Input routed through Gemini
         else {
           const aiResult = await parseMessageWithAI(text);
 
           if (aiResult.action === 'CREATE_TOKEN' && aiResult.name) {
+            // Successful intent: register token
             await registerUserToken(from, aiResult.name, tenantId);
           } else {
-            // Case 1: Greeting, random text, or missing name
-            await sendWhatsAppText(from, 'Please enter your name to generate token.');
+            // Rule 3: Rate Limiter for failed/casual intents
+            const rateCheck = await checkRateLimit(from, tenantId);
+            if (rateCheck.allowed) {
+              await sendWhatsAppText(from, rateCheck.reply);
+            } else {
+              console.log(`Rate limit exceeded for +${from}. Ignored message.`);
+            }
           }
         }
       }
-    }
+
 
     return res.status(200).json({ status: 'ok' });
   }
