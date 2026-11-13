@@ -5,6 +5,7 @@ import { handleAdminCommand } from '../lib/admin.js';
 import { sendWhatsAppText } from '../lib/whatsapp.js';
 import { parseMessageWithAI } from '../lib/gemini.js';
 import { checkAndRecordCancel, checkRateLimit } from '../lib/validators.js';
+import { handleInvalidInput } from '../lib/validators.js';
 
 
 // 1. Disable Next.js automatic body parser so we can verify the raw byte stream
@@ -147,23 +148,23 @@ export default async function handler(req, res) {
             await cancelUserToken(from, tenantId);
           }
         }
-        // 3. User Input routed through Gemini
+                // 3. User Input routed through Gemini
         else {
           const aiResult = await parseMessageWithAI(text);
 
           if (aiResult.action === 'CREATE_TOKEN' && aiResult.name) {
-            // Successful intent: register token
             await registerUserToken(from, aiResult.name, tenantId);
           } else {
-            // Rule 3: Rate Limiter for failed/casual intents
-            const rateCheck = await checkRateLimit(from, tenantId);
-            if (rateCheck.allowed) {
-              await sendWhatsAppText(from, rateCheck.reply);
+            // User typed something invalid. Apply spam strike.
+            const invalidCheck = await handleInvalidInput(from, tenantId);
+            if (invalidCheck.reply) {
+              await sendWhatsAppText(from, invalidCheck.reply);
             } else {
-              console.log(`Rate limit exceeded for +${from}. Ignored message.`);
+              console.log(`Silence enforced for spammer +${from}`);
             }
           }
         }
+
       }
 
 
